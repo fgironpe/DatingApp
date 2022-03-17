@@ -380,3 +380,21 @@ public ActionResult<IEnumerable<AppUser>> GetUsers() { }
     ```csharp
     [HttpGet("{id}")]
     ```
+
+## Agregar CORS
+
+En el fichero startup.cs hay que agregar la siguiente línea en el método ```ConfigureServices()```
+
+```csharp
+services.AddCors();
+```
+
+En este método el orden no es importante, por lo que se puede poner esa línea antes o después de cualquier otro servicio.
+
+También hay que escribir la siguiente línea en el método ```Configure()```
+
+```csharp
+app.UseCors(policy => policy.AllowAnyMethod().WithOrigins("http://localhost:4200"));
+```
+
+En este caso, sí que es importante el orden en el que se usa el servicio, ya que tiene que estar después del routing, y antes que la authentication.
