@@ -395,7 +395,7 @@ En este método el orden no es importante, por lo que se puede poner esa línea 
 También hay que escribir la siguiente línea en el método ```Configure()```
 
 ```csharp
-app.UseCors(policy => policy.AllowAnyMethod().WithOrigins("http://localhost:4200"));
+app.UseCors(policy => policy.AllowAnyHeader().AllowAnyMethod().WithOrigins("https://localhost:4200"));
 ```
 
 En este caso, sí que es importante el orden en el que se usa el servicio, ya que tiene que estar después del routing, y antes que la authentication.
