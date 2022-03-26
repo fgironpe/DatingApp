@@ -366,7 +366,7 @@ Inyectamos la dependencia DataContext en la clase para poder acceder a la BBDD:
     public ActionResult<IEnumerable<AppUser>> GetUsers() { }
 ```
 
-```[HttpGet]``` nos indica que el método va a ser un endpoint get, en el que podremos desde el cliente coger los datos que le solicitemos.
+***[HttpGet]*** nos indica que el método va a ser un endpoint get, en el que podremos desde el cliente coger los datos que le solicitemos.
 
 ```csharp
 public ActionResult<IEnumerable<AppUser>> GetUsers() { }
@@ -377,6 +377,7 @@ public ActionResult<IEnumerable<AppUser>> GetUsers() { }
 - ```IEnumerable<AppUser>```: Permite iterar sobre la colección.
 
 - Endpoints con parámetros:
+
     ```csharp
     [HttpGet("{id}")]
     ```
@@ -398,3 +399,420 @@ app.UseCors(policy => policy.AllowAnyMethod().WithOrigins("http://localhost:4200
 ```
 
 En este caso, sí que es importante el orden en el que se usa el servicio, ya que tiene que estar después del routing, y antes que la authentication.
+
+## Cambios en las entidades
+
+Si se realiza un cambio en cualquier entidad, hay que actualizar la migración y volver a crear la base de datos con los nuevos cambios que se han realizado.
+
+Para ello habría que escribir los siguientes comandos en la terminal:
+
+```bash
+dotnet ef migrations add UserPasswordAdded
+```
+Actualiza las migraciones que se encuentran en la carpeta Migrations del proyecto.
+Donde después de add, iría una descripción de lo que se ha modificado
+
+```bash
+dotnet ef database update
+```
+Actualiza la BBDD con los nuevos datos que se han introducido en la migración.
+
+## DTO (Data Transfer Object)
+
+## JSON Web Tokens (JWT)
+
+Una API no es algo con lo que mantenemos una sesión, hacemos una petición y el API responde y la relación se acaba hasta que se hace una nueva petición.
+
+Los tokens son buenos para usar con una API porque son lo suficientemente ligeros como para enviarlos en cada petición.
+
+- Son un standard de la industria para tokens (RFC 7519)
+- Son autónomos y pueden contener:
+    - Credenciales
+    - Peticiones
+    - Otra información
+
+### Estructura
+
+Un JWT se divide en 3 partes, cada parte se separa con un .:
+
+1. Cabecera: Contiene el algoritmo y el tipo de token que es:
+        - El algoritmo es lo que se usa para encriptar la firma en la tercera parte del token.
+        - El tipo de token que es (JWT en este caso).
+
+    ```json
+    {
+        "alg": "HS512",
+        "typ": "JWT"
+    }
+    ``` 
+
+2. Payload: Puede contener información sobre nuestras peticiones y nuestas credenciales, por lo que podemos tener cosas como el identificador, el nombre de usuario, qué roles de usuario tiene o cualquier otra petición.
+    - nbf: (Timestamp): Significa que el token no podrá ser usado antes de una fecha y hora determinadas.
+    - exp: (Timestamp) - Expidity Date: Fecha de caducidad del token.
+    - iat:  (TImestamp) - Issued At: Fecha de emisión del token.
+
+    ```json
+    {
+        "nameId": "lola",
+        "role": "Member",
+        "nbf": 1599297240,
+        "exp": 1599297240,
+        "iat": 1599297240
+    }
+    ``` 
+
+3. Contiene la firma encriptada del token. La firma es encriptada por el servidor usando una clave segura y nunca abandona el servidor.
+
+La única parte que está encriptada en un token es la tercera, todos los demás datos son fáciles de acceder a ellos, pero lo que no es fácil es modificar el token de ninguna manera y esperar que el API lo valide, porque cualquier modificación cambiará la estructura del token y su firma no podrá ser verificada.
+
+### Funcionamiento de la autenticación por token.
+
+1. El usuario se logea y manda la información del nombre y la contraseña al servidor.
+
+2. El servidor validará las credenciales y devolverá un JWT que el cliente guardará en el local storage del navegador.
+
+3. Se enviará el JWT en cada petición.
+    - Cada vez que queramos acceder a algo que está protegido por autenticación en el servidor, enviaremos el JWT con la petición.
+
+    - Lo que se hace con el token es agregar una cabecera de autenticación a la petición y luego el servidor comprobará el token y verificará que es válido.
+
+    - El servidor firmará el token y tendrá acceso a su clave privada que tiene almacenada.
+
+    - El servidor podrá verificar que el token es válido sin necesidad de hacer una petición a la base de datos.
+
+4. El servidor verifica el JWT y envía una respuesta.
+
+### Beneficios del JWT
+
+1. No hay que administrar sesiones. Los JWT son tokens autónomos:
+    
+    - Sólo tenemos que enviar el token con cada petición, y como es muy ligero no agrega mucho tamaño a nuestra petición.
+
+2. Portable: Un token puede ser usado por muchos backends: 
+    
+    - Mientras que todos los backends compartan la misma firma y la misma clave secreta, podrán verificar que el token es válido.
+    
+3. No se requieren cookies, por lo que es apto para móviles:
+
+4. Rendimiento: 
+    
+    - Una vez son creados, no hay necesidad de hacer peticiones a la base de datos, por lo que cuando un usuario de logea, le emitimos un token.
+
+### Agregar JWT a la API
+
+- Para seguir el principio de responsabilidad única, crearemos un servicio que se encargue de administrar los JWT. Lo que hará será recibir un usuario y creará un token para el usuario y lo devolverá al controlador.
+
+    Para ello crearemos una **interfaz** (como conveniencia, los nombres de la interfaz es recomendable que empiecen por I).
+
+    Una interfaz es una especie de contrato entre ella misma y los elementos que la usen. 
+
+    Este contrato estipula que cualquier clase que use esta interfaz, también tiene que usar sus propiedades, métodos y / o eventos.
+
+    La razón para crear interfaces asociadas a servicios es por el testing, ya que es más fácil mockear la interfaz para hacer pruebas con ella.
+
+    Una interfaz no contiene lógica de implementación, solo contiene la firma de las funcionalidades que proporciona: 
+
+    ```csharp
+    public interface ITokenService
+    {
+        string CreateToken(AppUser user);
+    }
+
+    ``` 
+
+- Una vez creada la interfaz, se creará un servicio que dependerá de ésta, y que usará sus métodos como ya hemos visto antes:
+
+    ```csharp
+    public class TokenService: ITokenService
+    {
+        public string CreateToken(AppUser user)
+        {
+            // lógica
+        }
+    }
+
+    ``` 
+
+- Después hay que agregar una dependencia del servicio en el método ```ConfigureServices()``` de la clase startup.cs:
+
+    ```csharp
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddScoped<ITokenServiceInterface, TokenService>();
+    }
+    ```
+    Cuando inyectamos un servicio en el método ```ConfigureServices()``` hay que especificar el ciclo de vida que tendrá este servicio.
+
+    En este caso ```AddScoped<>()``` nos indica que su ciclo de vida será el mismo que el de la petición Http que tendrá lugar cuando se llame a este servicio, por lo que una vez finalizada el servicio se cerrará, liberando los recursos. 
+
+    ```csharp
+    services.AddScoped<ITokenServiceInterface, TokenService>();
+    ```
+
+### Creación del token
+
+- Descargamos el siguiente paquete nuget: System.IdentityMOdel.Tokens.Jwt y lo instalamos.
+
+- Creamos un constructor en nuestro servicio y le inyectamos la dependencia IConfiguration de ***Microsoft.Extensions.Configuration***:
+
+    ```csharp
+    public TokenService(IConfiguration config) { }
+    ```
+
+- Creamos un nuevo campo de tipo ***SymmetricSecurityKey*** que se importa de ***Microsoft.IdentityModel.Tokens***:
+
+    ```csharp
+    private readonly SymmetricSecurityKey _key;
+    ```
+
+    - La encriptación simétrica es tipo de encriptación donde una clave se encarga de encriptar y desencriptar información electrónica. Por lo que la misma clave se encarga de firmar un Jwt y de verificar la firma. 
+
+    - Otro tipo de encriptación es la asimétrica, donde un par de claves (pública y privada), se usan para encriptar y desencriptar mensajes.
+        Así es como funcionan Https y SSL.
+
+- Dentro del constructor tenemos que definir nuestra clave:
+
+    ```csharp
+    public TokenService(IConfiguration config) 
+    { 
+        _key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["TokenKey"]));
+    }
+    ```
+
+- Implementamos la lógica para crear el token dentro del método ```CreateToken(AppUser user)```:
+
+    - Empezamos identificando qué aserciones (claims), van a ir dentro del token. En este caso irá el nombre de usuario:
+
+        ```csharp
+        // Imports para JwtRegisteredClaimNames
+        using System.IdentityModel.Tokens.Jwt;
+
+        public string CreateToken(AppUser user)
+        { 
+            var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.NameId, user.UserName)
+            };
+        }
+        ```
+
+    - Creamos las credenciales:
+
+        ```csharp
+        public string CreateToken(AppUser user)
+        { 
+            var creds = new SigningCredentials(_key, SecurityAlgorithms.HmacSha512Signature);
+        }
+        ```
+
+    - Creamos una descripción del token:
+
+        ```csharp
+        // Imports para DateTime
+        using System;
+
+        public string CreateToken(AppUser user)
+        { 
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                // Agregamos las aserciones
+                Subject = new ClaimsIdentity(claims),
+                // Definimos una fecha de caducidad
+                Expires = DateTime.Now.AddDays(7),
+                // Agregamos las credenciales
+                SigningCredentials = creds
+            };
+        }
+        ```
+
+    - Creamos un TokenHandler que se encargará de crear el token con la estructura que hemos definido en los pasos previos:
+
+        
+        ```csharp
+        var tokenHandler = new JwtSecurityTokenHandler();
+
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        ```
+
+    - Y por último devolvemos el token generado:
+
+        ```csharp
+        return tokenHandler.WriteToken(token);
+        ```
+
+    Por lo que el método ```CreateToken()``` quedaría de la siguiente manera: 
+
+    ```csharp
+        public string CreateToken(AppUser user)
+        {
+            // Creamos las aserciones (claims):
+            var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.NameId, user.UserName)
+            };
+
+            // Creamos las credenciales (pasamos como parámetro la key y el tipo de encriptación de lafirma)
+            var creds = new SigningCredentials(_key, SecurityAlgorithms.HmacSha512Signature);
+
+            // Descripción del token
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(claims),
+                Expires = DateTime.Now.AddDays(7),
+                SigningCredentials = creds
+            };
+
+            // TokenHandler
+            var tokenHandler = new JwtSecurityTokenHandler();
+
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+
+            return tokenHandler.WriteToken(token);
+        }
+    ```
+
+### Usando el token generado
+
+- Creamos un DTO para indicar lo que nos devolverá el API una vez se haya registrado o autenticado correctamente un usuario, usando el token para ello:
+
+    ```csharp
+        public class UserDto
+        {
+            public string Username { get; set; }
+            public string Token { get; set; }
+        }
+    ```
+
+    Le asignamos dos propiedades, el token asociado a ese usuario y el nombre de usuario que necesitamos para crear el token y que va dentro del payload.
+
+- En AccountController tenremos que cambiar los métodos de ```Login()``` y ```Register()``` para que hagan uso del nuevo DTO, para ello tendremos que cambiar el tipo de return del método y el propio return generando un nuevo UserDto:
+
+        ```csharp
+        [HttpPost("register")]
+        public async Task<ActionResult<UserDto>> Register(RegisterDto registerDto) 
+        {
+            // lógica
+
+            return new UserDto
+            {
+                Username = user.UserName,
+                Token = _tokenService.CreateToken(user)
+            };
+        }
+    ```
+
+- Definimos la clave secreta en appsettings.Development.json (sólo para el entorno de desarrollo):
+
+    ```json
+        "TokenKey": "super secret unguessable key",
+    ```
+
+### Agregar autenticación y autorización al proyecto
+
+#### Atributos en controlador
+
+Para agregar autenticación o autorización a un endpoint, hay que agregar estos atributos a los métodos que queramos que lo requieran:
+
+``` [AllowAnonymous]``` permite que cualquier cliente pueda hacer la petición.
+```[Authorize]``` necesitará de un método de autorización para poder realizar la petición, en este caso un JWT.
+
+```csharp
+    // Import para [Authorize]
+    using Microsoft.AspNetCore.Authorization;
+
+    [Authorize]
+    [HttpGet("{id}")]
+    public async Task<ActionResult<AppUser>> GetUser(int id)
+    {
+        return await _context.Users.FindAsync(id);
+    }
+```
+
+#### Agregar Middleware de autorización
+
+- En el Nuget Gallery hay que descargar el siguiente paquete: ***Microsoft.AspNetCore.Authentication.JwtBearer***. Hay que instalar la versión que coincida con la versión de .NET que tengamos.
+
+- Agregar el servicio en el fichero ***startup.cs***:
+
+    - En el método ConfigureServices():
+
+        - Agregar la autenticación: ```services.AddAuthentication()```
+      
+        - Elegir el método de autenticación: ```services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)```
+       
+        - Agregar configuración: 
+           
+            ```csharp
+                services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options =>
+                {
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        // Validamos la firma del servidor
+                        ValidateIssuerSigningKey = true,
+                        // Agregamos la firma del servidor
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["TokenKey"])),
+                        ValidateIssuer = false,
+                        ValidateAudience = false
+                    };
+                });
+            ```
+
+    - En el método Configure():
+        ```app.UseAuthentication();``` Tiene que ir entre el CORS y la Autorización.
+
+## Extension methods
+
+Los extension methods nos permiten agregar métodos a tipos existentes sin necesidad de crear un nuevo tipo derivado de éste o modificarlo.
+
+Esto nos permitirá no repetir código y poder usar este método en varias clases que lo requieran.
+
+### Crear un Método Extendido
+
+- Tenemos que crear una clase estática con un método que nos devuelva los servicios que queramos exportar (fijarse bien los parámetros que tienen los servicios para inyectarlos en el constructor del método):
+
+    ```csharp
+    public static class ApplicationServiceExtensions
+    {
+        public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration config)
+        {
+            services.AddScoped<ITokenService, TokenService>();
+            
+            services.AddDbContext<DataContext>(options => {
+                options.UseSqlite(config.GetConnectionString("DefaultConnection"));
+            });
+
+            return services;
+        }
+    }
+    ```
+
+    En este caso estamos exportando los servicios de la base de datos y el JWT (ApplicationServices), del método ConfigureServices() del fichero Startup.cs:
+
+    ```csharp
+    public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddScoped<ITokenService, TokenService>();
+            
+            services.AddDbContext<DataContext>(options => {
+                options.UseSqlite(_config.GetConnectionString("DefaultConnection"));
+            });
+
+            services.AddControllers();
+            services.AddCors();
+        }
+    ```
+
+    Si nos fijamos, éste método tiene como parámetro un IServiceCollection, que tendremos que ponerlo también en el método extendido.
+
+    También vemos que UseSqlite usa _config, que se define en otro método del fichero Startup.cs, por lo que también habrá que pasarlo al método extendido para poder usarlo ahí.
+
+    Una vez configurado, hay que usar el método extendido en el método que nos interesa (ConfigureServices() en este caso), sustituyendo las líneas que hemos quitado por una llamada al método extendido:
+
+    ```csharp
+    public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddApplicationServices(_config);
+            // ...
+        }
+    ```
