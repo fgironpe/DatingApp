@@ -1,3 +1,11 @@
 .dropdown-toggle, .dropdown-item {
   cursor: pointer;
 }
+
+a.dropdown-toggle.text-light {
+  text-decoration: none;
+}
+
+.login-submit {
+  padding: 0.50rem 1.5rem
+}
