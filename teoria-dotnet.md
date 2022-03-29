@@ -816,3 +816,155 @@ Esto nos permitirá no repetir código y poder usar este método en varias clase
             // ...
         }
     ```
+
+    ## Relaciones Entity Framework
+
+    ### One to many
+
+    #### Teoría
+
+    En este caso vamos a asociar las tablas Users y Photos:
+
+    Un usuario puede tener muchas fotos, por lo que la tabla Photos tendrá que tener como clave foránea el Id de la tabla Users.
+
+    #### Agregar relación en el proyecto con EF por convención (método automático)
+
+    A la hora de crear la relación, EF lo hace automáticamente, ya que dentro de la *Entidad AppUser* hay una propiedad que es una *ICollection* de *Photos*, pero dentro de la entidad Photo no hay ninguna propiedad de la tabla Users, por lo que EF automáticamente asocia una relación ***Uno a Muchos***, en este caso tampoco habría que agregar la *Entidad Photos* en el *DbContext*:
+
+    ```csharp
+    public ICollection<Photo> Photos { get; set; }
+    ```
+
+    A la hora de crear la migración donde se vea reflejada la relación hay que hacerlo con el siguiente comando:
+
+    ```bash
+    dotnet ef migrations add nombreMigracion
+    ```
+
+    Cuando creamos la migración en este caso podemos ver un par de cosas:
+
+    - Se crea la nueva tabla Photos relacionada con la Entidad Photo (para que la tabla se llame de forma distinta a la entidad si no lo estaba previamente, se pone el atributo [Table("nombreTabla")] en la entidad).
+
+    - Dentro de la tabla, si es la parte Muchos de la relación, se crea una columna con el Id de la parte Uno, y será un campo nullable, por lo que podrá haber fotos en nuestra base de datos que no estén asociadas a un usuario:
+        ```csharp
+        AppUserId = table.Column<int>(type: "INTEGER", nullable: true)
+        ```
+    - La columna AppUserId la crea como una clave foránea, con el tipo de borrado *ReferentialAction.Restrict*, lo que quiere decir que si borramos un usuario, no se borrarán las fotos asociadas a este.
+
+    ### Configurar manualmente la relación
+
+    En esta aplicación de ejemplo queremos que todas las fotos tengan que pertenecer a algún usuario, y que cuando un usuario se de de baja se borren todas sus fotos (borrado en cascada), por lo que tendremos que hacer una definición completa de la relación:
+
+    1. Para poder establecer la relación, en la Entidad perteneciente a la parte muchos tendremos que decirle sobre la otra parte, en este caso tendremos que agregar dos propiedades nuevas en la Entidad.
+
+        ```csharp
+        public AppUser AppUser { get; set; }
+        public int AppUserId { get; set; }
+        ```
+
+        - Esto es lo que se llama Definición completa, ya que tenemos en la *Entidad AppUser* (la parte Uno de la relación) una propiedad *ICollection* de *Photos* (un array de Photos), y dentro de la *Entidad Photo* definimos AppUser
+
+    2. Creamos la nueva migración:
+
+        ```bash
+        dotnet ef migrations add nombreMigracion
+        ```
+
+        - A la hora de comprobar lo que ha cambiado en la migración podremos ver lo siguiente:
+            ```csharp
+            AppUserId = table.Column<int>(type: "INTEGER", nullable: false)
+            ```
+            Ahora la columna AppUserId de la tabla Photos no es nullable, por lo que todas las fotos tendrán que pertenecer a un usuario y en el apartado Constrains vemos que la columnma AppUserId se ha creado como clave foránea pero con borrado en cascada.
+
+    3. Una vez creada la migración tendremos que actualizar la BBDD:
+
+        ```bash
+        dotnet ef database update
+        ```
+
+## Patrón Repositorio
+
+https://dev.to/ebarrioscode/patron-repositorio-repository-pattern-y-unidad-de-trabajo-unit-of-work-en-asp-net-core-webapi-3-0-5goj
+
+Un Repositorio media entre las capas del dominio y del mapeo de datos, actuando como una colección de objetos de dominio en memoria.
+
+Un repositorio es una capa de abstracción. En vez de que el controlador acceda directamente al DbContext, usará un repositorio y usará los métodos que estén dentro de éste. El repositorio usará el DbContext y ejecutará la lógica dentro de éste.
+
+### Razones para usarlo
+
+- Encapsula la lógica dentro del DbContext donde hay miles de métodos (*Users.First()*, *Users.FirstOfDefault()*...), entonces usando un repositorio encapsulamos la lógica, y si un controlador inyecta un repositorio solo tendrá acceso a los métodos de éste (*GetUser()*, *GetAllUsers()*...).
+
+- ***Reduce la duplicidad de la lógica de queries***: Si necesitamos acceder a un dato desde varios controladores, sólo tendremos que inyectar el repositorio encargado de esa lógica en cada uno de los controladores, en vez de escribir la misma query.
+
+- ***Facilita el testing***: Es más fácil hacer tests a un repositorio que a un DbContext.
+
+### Ventajas
+
+- Minimiza la duplicidad de la lógica de queries.
+
+- Desacopla la aplicación del framework de persistencia.
+
+- Todas las queries a la base de datos están centralizadas y no están dispersas por toda la aplicación.
+
+- Permite cambiar el ORM facilmente (sólo habría que modificar los repositorios).
+
+- Facilita el testing: Es más fácil crear un Mock de una interfaz Repositorio que testear contra el DbContext.
+
+### Desventajas
+
+- Es una abstracción de una abstracción: Entity Framework es una abstracción de la base de datos y un repositorio es una abstracción de Entity Framework.
+
+- Cada entidad tiene que tener su propio repositorio, lo que indica que habrá que escribir más código.
+
+-  Necesita implementar el patrón Unidad de Trabajo para controlar las transacciones.
+
+## Implementar el patrón repositorio en nuestra aplicación
+
+1. Creamos una interfaz para nuestro repositorio:
+
+    ```csharp
+    public interface IUserRepository
+    {
+        void Update(AppUser user);
+        Task<bool> SavaAllAsync();
+        Task<IEnumerable<AppUser>> GetUsersAsync();
+        Task<AppUser> GetUserByIdAsync(int id);
+        Task<AppUser> GetUserByUsernameAsync(string username);
+    }
+    ```
+
+2. Creamos la clase de implementación que implementará la interfaz que hemos creado antes.
+
+3. Agregamos la interfaz y la clase de implementación en el método ***ConfigureServices()*** de ***Startup.cs*** (o de nuestro método extendido si lo tenemos):
+
+    ```csharp
+    services.AddScoped<IUserRepository, UserRepository>();
+    ```
+
+4. Modificamos el controlador para poder usar el repositorio"
+
+    - Inyectamos la interfaz del repositorio en el controlador, quitando el DbContext:
+        ```csharp
+        private readonly IUserRepository _userRepository;
+
+        // Importante inyectar la interfaz en vez de la clase de implementación, ya que si no EF no va a saber crear una instancia de esta.
+        public UsersController(IUserRepository userRepository)
+        {
+            _userRepository = userRepository;
+        }
+        ```
+
+
+    - Modificamos los métodos para que usen los métodos del repositorio:
+
+        ```csharp
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<AppUser>>> GetUsers()
+        {
+            return Ok(await _userRepository.GetUsersAsync());
+        }
+        ```
+
+## AutoMapper
+
+https://programacion-ecuador.com/2021/04/23/iniciando-con-automapper-en-asp-net-core/
